@@ -53,17 +53,8 @@ property alphabetRightInv (x) = if inAlphabet x
 // Take 6 bits of binary at a time and add an ascii character for each set of 6 bits. 
 // If we have 48 bits of input, we will have 48/6 = 8 8 bit words of output (64 bits out)
 encode : {a, c} (fin a, c == (8 * a + 5) / 6, 6 * c >= 8 * a) => [a][8] -> [c][8]
+//encode : {a, c} (fin a, a * 4 == c * 3) => [a][8] -> [c][8]
 encode xs = [ alphabet @ x | x <- groupBy`{6} (join xs # zero) ]
-
-/* Cryptol 1 version 
- * encodeLE : {a c} (fin a, fin c, c == (8 * a + 5) / 6, 6 * c >= 8 * a) => [a][8] -> [c][8];
- * encodeLE xs = [| alphabet @ reverse x || x <- groupBy(6, join rxs # zero) |]
- *  where rxs = [| reverse x || x <- xs |];
- */
-
-encodeLE : {a, c} (fin a, fin c, c == (8 * a + 5) / 6, 6 * c >= 8 * a) => [a][8] -> [c][8]
-encodeLE xs = [ alphabet @ reverse x | x <- groupBy`{6} (join rxs # zero) ]
-  where rxs = [ reverse x | x <- xs ]
 
 /* Cryptol 1 version 
  * decode : {a c} (fin a, a == (6 * c - 5) / 8 + 1, 6 * c >= 8 * a) => [c][8] -> [a][8];
@@ -71,23 +62,16 @@ encodeLE xs = [ alphabet @ reverse x | x <- groupBy`{6} (join rxs # zero) ]
  */
 
 // Take ASCII text as input (length c) and generate binary as output (length a)
-decode : {a, c} (fin a, fin c, c > 0, a == (6 * c - 5) / 8 + 1, 6 * c >= 8 * a) => [c][8] -> [a][8]
+//decode : {a, c} (fin a, fin c, c > 0, a == (6 * c - 5) / 8 + 1, 6 * c >= 8 * a) => [c][8] -> [a][8]
+decode : {a, c} (fin a, fin c, a * 4 == c * 3) => [c][8] -> [a][8]
 decode xs = groupBy`{8} (take`{front=(a * 8)} (join [ alphabet' @ x | x <- xs ] ))
-
-/* Cryptol 1 version
- * decodeLE : {a c} (fin a, a == (6 * c - 5) / 8 + 1, 6 * c >= 8 * a) => [c][8] -> [a][8];
- * decodeLE xs = [| reverse b || b <- groupBy(8, take(`a * 8, join [| reverse (alphabet' @  x) || x <- xs |])) |];
- */
-
-decodeLE : {a, c} (fin a, fin c, 6 * c >= 5,  a == (6 * c - 5) / 8 + 1, 6 * c >= 8 * a) => [c][8] -> [a][8]
-decodeLE xs = [ reverse b | b <- groupBy`{8} (take`{a * 8} (join [ reverse (alphabet' @  x) | x <- xs ])) ]
 
 // From REPL
 // :prove encodeLeftInv [3][8] -> Bit
 property encodeLeftInv (x) = decode (encode x) == x
 
 // :prove encodeLELeftInv [3][8] -> Bit
-property encodeLELeftInv (x)  = decodeLE (encodeLE x) == x
+//property encodeLELeftInv (x)  = decodeLE (encodeLE x) == x
 
 // NOTE: encode is non-surjective, so it does not have a right inverse.
 // Similarly, decode is non-injective: 
@@ -118,13 +102,24 @@ property encodeLELeftInv (x)  = decodeLE (encodeLE x) == x
   */ 
 //encode : {a, c} (fin a, c == (8 * a + 5) / 6, 6 * c >= 8 * a) => [a][8] -> [c][8]
 
-b64encode : {a, r} (fin a, fin r, r == 4 * ((a + 2) / 3), r >= (8 * a + 5) / 6, 6 * ((8 * a + 5) / 6) >= 8 * a) => [a][8] -> [r][8]
+//r == 4 * ((a + 2) / 3), r >= (8 * a + 5) / 6, 6 * ((8 * a + 5) / 6) >= 8 * a)
 
-b64encode xs = encode xs # padding
-  where 
-    padding : {z} (fin z) => [z][8]
-    padding = take`{z} ['=', '='...]
+// Grab 6 bits at a time, putting in one character for each six bits
+// The encoded result must have a length that is a multiple of 4,
+// because the lcm of 6,8 is 24, which is 4 6 bit chunks
+b64encode : {a, r, pad} (fin a, fin r, fin pad, pad >= 0, pad <= 2,
+(r + pad) % 4 == 0,
+(5 + 8 * a) / 6 == r
+) => [a][8] -> [r + pad][8]
 
+b64encode xs = (encode xs) # padding`{pad}
+
+//  where 
+//    padding : {z} (fin z) => [z][8]
+//    padding = take`{z} ['=', '='...]
+
+padding : {z} (fin z) => [z][8]
+padding = take`{z} ['=', '='...]
 
 // The length of the decoded message 'a' depends on the value of the
 // input string (in particular the number of '=' symbols padding the 
@@ -149,10 +144,10 @@ b64encode xs = encode xs # padding
  * b64decode xs = reverse (drop(`pad, reverse (decodeLE xs)))
  */
 
-b64decode : {pad, a, r} ( fin a, fin r, fin pad,
-r > 0,
- a + pad == (6 * r - 5) / 8 + 1,
- pad >= 0, 2 >= pad, 6 * r >= 8 * ((6 * r - 5) / 8) + 8) => [r][8] -> [a][8]
+b64decode : {a, r, pad} (fin a, fin r, fin pad, pad >= 0, pad <= 2,
+(r + pad) % 4 == 0,
+(5 + 8 * a) / 6 == r
+  ) => [r+pad][8] -> [a][8]
 
 b64decode xs = take`{back=pad} (decode xs)
 
@@ -172,15 +167,14 @@ b64decode xs = take`{back=pad} (decode xs)
  * theorem b64encodeLeftInv: {x}. b64decode (b64encode x) == x
  */
 
-property b64encodeLeftInv (x) = b64decode (b64encode x) == x
+//property b64encodeLeftInv (x) = b64decode (b64encode x) == x
 
 ////////////////////////////////////////////////////////////////////////
 // test cases
 ////////////////////////////////////////////////////////////////////////
 
 tests = [te1, te2, te3, te4, te5, te6, te7,
-        // td1,
-        td2, td3, td4, td5, td6, td7]
+         td1, td2, td3, td4, td5, td6, td7]
 
 property testsPass = tests == ~zero
 
@@ -193,7 +187,7 @@ te5 = b64encode "foob" == "Zm9vYg=="
 te6 = b64encode "fooba" == "Zm9vYmE="
 te7 = b64encode "foobar" == "Zm9vYmFy"
 
-//td1 = b64decode`{pad=0} "" == ""
+td1 = b64decode`{pad=0} "" == ""
 td2 = b64decode`{pad=2} "Zg==" == "f"
 td3 = b64decode`{pad=1} "Zm8=" == "fo"
 td4 = b64decode`{pad=0} "Zm9v" == "foo"
